@@ -1,0 +1,5 @@
+streamlit==1.32.0
+tensorflow-cpu==2.16.1  # Use CPU-only version for smaller footprint
+pillow==10.3.0
+numpy==1.26.4
+protobuf==3.20.3
