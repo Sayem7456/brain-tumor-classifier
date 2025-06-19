@@ -1,13 +1,20 @@
 import os
+import sys
 import streamlit as st
-import tensorflow as tf
 import numpy as np
 from PIL import Image
 
+# Check TensorFlow installation
+try:
+    import tensorflow as tf
+    st.success(f"TensorFlow version: {tf.__version__}")
+except ImportError:
+    st.error("CRITICAL: TensorFlow not installed. Check requirements.txt")
+    st.stop()
+
 # Verify weights file exists
 if not os.path.exists("best_weights.h5"):
-    st.error("CRITICAL ERROR: Model weights file not found!")
-    st.error("Please ensure 'best_weights.h5' is in the same directory as this app.")
+    st.error("Model weights file not found! Ensure 'best_weights.h5' is present")
     st.stop()
 
 # Define model architecture
@@ -39,20 +46,14 @@ def create_model():
     
     return tf.keras.Model(inputs, outputs)
 
-# Load model with caching
+# Load model
 @st.cache_resource
 def load_model():
     model = create_model()
     model.load_weights('best_weights.h5')
     return model
 
-try:
-    model = load_model()
-except Exception as e:
-    st.error(f"MODEL LOADING ERROR: {str(e)}")
-    st.error("Please check the model architecture and weights compatibility")
-    st.stop()
-
+model = load_model()
 class_names = ['glioma', 'meningioma', 'notumor', 'pituitary']
 
 # Streamlit UI
@@ -65,25 +66,23 @@ if uploaded_file is not None:
         image = Image.open(uploaded_file).convert('RGB')
         st.image(image, caption='Uploaded MRI', width=256)
         
-        # Preprocess image
+        # Preprocess
         img = image.resize((224, 224))
-        img_array = np.array(img)
-        img_array = np.expand_dims(img_array, axis=0)
+        img_array = np.expand_dims(np.array(img), axis=0)
         
         # Predict
         predictions = model.predict(img_array)
         predicted_class = class_names[np.argmax(predictions[0])]
         confidence = np.max(predictions[0]) * 100
         
-        st.success(f"Prediction: **{predicted_class}**")
-        st.success(f"Confidence: **{confidence:.2f}%**")
+        st.subheader(f"Prediction: **{predicted_class}**")
+        st.subheader(f"Confidence: **{confidence:.2f}%**")
         
-        # Show class probabilities
+        # Show probabilities
         st.bar_chart(
             data={k: float(v) for k, v in zip(class_names, predictions[0])},
             height=300
         )
         
     except Exception as e:
-        st.error(f"PROCESSING ERROR: {str(e)}")
-        st.error("Please ensure you uploaded a valid image file")
+        st.error(f"Error processing image: {str(e)}")
