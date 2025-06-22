@@ -26,7 +26,10 @@ def create_model():
     
     # Full EfficientNetB0 architecture with channel attention
     # ... [ALL LAYERS FROM YOUR MODEL SUMMARY GO HERE] ...
-    
+    base_model = tf.keras.applications.EfficientNetB0(weights=None, include_top=False, input_tensor=inputs)
+    base_model.load_weights('efficientnetb0_notop.h5')
+    for layer in base_model.layers[:-100]:
+        layer.trainable = False
     # Final layers
     channel_attention = tf.keras.layers.GlobalAveragePooling2D()(base_model.output)
     channel_attention = tf.keras.layers.Dense(1, activation='sigmoid')(channel_attention)
