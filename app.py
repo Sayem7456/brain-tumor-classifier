@@ -3,7 +3,7 @@ import streamlit as st
 import numpy as np
 from PIL import Image
 import tensorflow as tf
-import tensorflow_addons as tfa
+#import tensorflow_addons as tfa
 
 # Verify weights file exists
 if not os.path.exists("best_weights.h5"):
