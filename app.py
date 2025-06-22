@@ -1,103 +1,72 @@
-import os
 import streamlit as st
+import tensorflow as tf
+from tensorflow import keras
+from tensorflow.keras import layers, Model
 import numpy as np
 from PIL import Image
-import tensorflow as tf
-#import tensorflow_addons as tfa
 
-# Verify weights file exists
-if not os.path.exists("best_weights.h5"):
-    st.error("Model weights file not found! Ensure 'best_weights.h5' is present")
-    st.stop()
+# --- CONFIGURATION ---
+IMAGE_SIZE = (224, 224)
+CLASS_NAMES = ['glioma', 'meningioma', 'notumor', 'pituitary']
+# Paths for weights
+EFFICIENTNET_WEIGHTS_PATH = 'efficientnetb0_notop.h5'  # path to pre-trained EfficientNetB0 no-top weights
+CLASSIFIER_WEIGHTS_PATH = 'best_weights.h5'           # path to your trained classifier weights
 
-# Define model architecture (EXACTLY as in training)
-def create_model():
-    inputs = tf.keras.Input(shape=(224, 224, 3))
-    rescaling = tf.keras.layers.Rescaling(1./255)(inputs)
-    normalization = tf.keras.layers.Normalization(
-        mean=[0.485, 0.456, 0.406],
-        variance=[0.052441, 0.050176, 0.052627]
-    )(rescaling)
-    
-    # Stem
-    stem_conv = tf.keras.layers.Conv2D(32, 3, strides=2, padding='same')(normalization)
-    stem_bn = tf.keras.layers.BatchNormalization()(stem_conv)
-    stem_activation = tf.keras.layers.Activation('relu')(stem_bn)
-    
-    # Full EfficientNetB0 architecture with channel attention
-    # ... [ALL LAYERS FROM YOUR MODEL SUMMARY GO HERE] ...
+# --- MODEL DEFINITION ---
+def channel_attention_model(input_shape=(*IMAGE_SIZE, 3), num_classes=len(CLASS_NAMES)):
+    inputs = tf.keras.Input(shape=input_shape)
     base_model = tf.keras.applications.EfficientNetB0(weights=None, include_top=False, input_tensor=inputs)
     base_model.load_weights('efficientnetb0_notop.h5')
     for layer in base_model.layers[:-100]:
         layer.trainable = False
-    # Final layers
-    channel_attention = tf.keras.layers.GlobalAveragePooling2D()(base_model.output)
-    channel_attention = tf.keras.layers.Dense(1, activation='sigmoid')(channel_attention)
-    channel_attention = tf.keras.layers.Reshape((1, 1, -1))(channel_attention)
-    attended_features = tf.keras.layers.multiply([base_model.output, channel_attention])
     
-    x = tf.keras.layers.GlobalAveragePooling2D()(attended_features)
-    x = tf.keras.layers.Dense(1024, activation='relu')(x)
-    x = tf.keras.layers.Dropout(0.35)(x)
-    outputs = tf.keras.layers.Dense(4, activation='softmax')(x)
-    
-    return tf.keras.Model(inputs, outputs)
+    channel_attention = layers.GlobalAveragePooling2D()(base_model.output)
+    channel_attention = layers.Dense(1, activation='sigmoid')(channel_attention)
+    channel_attention = layers.Reshape((1, 1, -1))(channel_attention)
+    attended_features = layers.multiply([base_model.output, channel_attention])
 
-# Load model
-@st.cache_resource
-def load_model():
-    model = create_model()
-    model.load_weights('best_weights.h5')
+    # Global average pooling and dense layers for classification
+    x = layers.GlobalAveragePooling2D()(attended_features)
+    x = layers.Dense(1024, activation='relu')(x)
+    x = layers.Dropout(0.35)(x)
+    output = layers.Dense(num_classes, activation='softmax')(x)
+
+    model = Model(inputs, output, name='channel_attention_model')
     return model
 
+@st.cache_resource
+def load_model():
+    # Build the model
+    model = channel_attention_model()
+    # Load classifier weights
+    model.load_weights(CLASSIFIER_WEIGHTS_PATH)
+    return model
+
+# --- STREAMLIT APP ---
+st.title('Brain Tumor Classification with Channel Attention')
+
 model = load_model()
-class_names = ['glioma', 'meningioma', 'notumor', 'pituitary']
 
-# Streamlit UI
-st.title('Brain Tumor MRI Classification')
-st.write("Classify MRI scans into: glioma, meningioma, notumor, or pituitary")
+uploaded_file = st.file_uploader("Upload an MRI scan...", type=["jpg", "jpeg", "png"])
+if uploaded_file:
+    # Load image
+    img = Image.open(uploaded_file).convert('RGB')
+    img = img.resize(IMAGE_SIZE)
+    st.image(img, caption='Input Image', use_column_width=True)
 
-uploaded_file = st.file_uploader("Upload MRI Scan", type=["jpg", "jpeg", "png"])
-if uploaded_file is not None:
-    try:
-        # Load and convert to RGB
-        image = Image.open(uploaded_file).convert('RGB')
-        st.image(image, caption='Uploaded MRI', width=256)
-        
-        # EXACT PREPROCESSING AS IN TRAINING
-        img = image.resize((224, 224))
-        img_array = np.array(img).astype('float32')
-        
-        # Create TensorFlow dataset to match training pipeline
-        # This is CRITICAL to match the same preprocessing
-        ds = tf.data.Dataset.from_tensor_slices([img_array])
-        ds = ds.map(lambda x: tf.image.per_image_standardization(x))
-        
-        # Get the preprocessed image
-        for img in ds.take(1):
-            preprocessed_img = img.numpy()
-        
-        # Expand to batch dimension
-        img_array = np.expand_dims(preprocessed_img, axis=0)
-        
-        # Predict
-        predictions = model.predict(img_array)
-        predicted_index = np.argmax(predictions[0])
-        predicted_class = class_names[predicted_index]
-        confidence = np.max(predictions[0]) * 100
-        
-        st.subheader(f"Prediction: **{predicted_class}**")
-        st.subheader(f"Confidence: **{confidence:.2f}%**")
-        
-        # Show probabilities
-        st.write("Class Probabilities:")
-        for i, class_name in enumerate(class_names):
-            prob = predictions[0][i] * 100
-            st.write(f"- {class_name}: {prob:.2f}%")
-        
-        # Debug output
-        st.write("Raw predictions:", predictions[0])
-        st.write("Predicted class index:", predicted_index)
-        
-    except Exception as e:
-        st.error(f"Error processing image: {str(e)}")
+    # Preprocess
+    img_array = np.array(img).astype('float32')
+    st.write("Pixel range before normalization:", img_array.min(), img_array.max())
+    input_batch = np.expand_dims(img_array, axis=0)
+
+    # Predict
+    preds = model.predict(input_batch)
+    idx = np.argmax(preds[0])
+    conf = float(np.max(preds[0])) * 100
+    label = CLASS_NAMES[idx]
+
+    # Show results
+    st.subheader(f"Prediction: **{label}** ({conf:.1f}%)")
+    st.write("Probabilities:")
+    st.json({name: float(p) for name, p in zip(CLASS_NAMES, preds[0])})
+    st.bar_chart(preds[0])
